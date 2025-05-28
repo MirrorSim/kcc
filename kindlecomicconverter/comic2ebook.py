@@ -513,8 +513,11 @@ def buildEPUB(path, chapternames, tomenumber, ischunked):
         dirnames, filenames = walkSort(dirnames, filenames)
         for afile in filenames:
             if cover is None:
-                cover = os.path.join(os.path.join(path, 'OEBPS', 'Images'),
-                                     'cover' + getImageFileName(afile)[1])
+                try:
+                    cover = os.path.join(os.path.join(path, 'OEBPS', 'Images'),
+                                        'cover' + getImageFileName(afile)[1])
+                except Exception as e:
+                    raise UserWarning(f"{afile}: {e}")
                 options.covers.append((image.Cover(os.path.join(dirpath, afile), cover, options,
                                                    tomenumber), options.uuid))
             if not chapter:
@@ -579,6 +582,10 @@ def imgDirectoryProcessing(path):
         workerPool.join()
         img_processing_end = perf_counter()
         print(f"imgFileProcessing: {img_processing_end - img_processing_start} seconds")
+
+        # macOS 15 likes to add ._ files after multiprocessing
+        dot_clean(path)
+
         if GUI and not GUI.conversionAlive:
             rmtree(os.path.join(path, '..', '..'), True)
             raise UserWarning("Conversion interrupted.")
@@ -836,6 +843,14 @@ def sanitizePermissions(filetree):
             os.chmod(os.path.join(root, name), S_IWRITE | S_IREAD)
         for name in dirs:
             os.chmod(os.path.join(root, name), S_IWRITE | S_IREAD | S_IEXEC)
+    # clean dot from original file
+    dot_clean(filetree)
+
+def dot_clean(filetree):
+    for root, _, files in os.walk(filetree, topdown=False):
+        for name in files:
+            if name.startswith('._'):
+                os.remove(os.path.join(root, name))
 
 
 def chunk_directory(path):
@@ -940,7 +955,8 @@ def detectSuboptimalProcessing(tmppath, orgpath):
                         raise RuntimeError('Image file %s is corrupted. Error: %s' % (pathOrg, str(err)))
             else:
                 try:
-                    os.remove(os.path.join(root, name))
+                    if os.path.exists(os.path.join(root, name)):
+                        os.remove(os.path.join(root, name))
                 except OSError as e:
                     raise RuntimeError(f"{name}: {e}")
     # remove empty nested folders
@@ -1138,9 +1154,8 @@ def checkOptions(options):
     if options.profile == 'K1' or options.profile == 'K2' or options.profile == 'K34' or options.profile == 'KDX':
         options.panelview = False
         options.hq = False
-    if options.profile == 'KV' or options.profile in image.ProfileData.ProfilesKindlePDOC.keys():
+    if not options.hq and not options.autoscale:
         options.panelview = False
-        options.hq = False
     # Webtoon mode mandatory options
     if options.webtoon:
         options.panelview = False
@@ -1350,7 +1365,7 @@ def makeMOBIWorker(item):
     try:
         if os.path.getsize(item) < 629145600:
             output = subprocess_run(['kindlegen', '-dont_append_source', '-locale', 'en', item],
-                           stdout=PIPE, stderr=STDOUT, encoding='UTF-8', check=True)
+                           stdout=PIPE, stderr=STDOUT, encoding='UTF-8', errors='ignore', check=True)
         else:
             # ERROR: EPUB too big
             kindlegenErrorCode = 23026
